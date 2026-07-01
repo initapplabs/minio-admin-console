@@ -32,7 +32,13 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.ACCESS_GH_TOKEN }}
+
+      - name: Extract version from package.json
+        id: extract-version
+        run: |
+          VERSION=$(jq -r .version package.json)
+          echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Extract metadata for Docker
         id: meta
@@ -42,7 +48,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
+            type=semver,pattern=${{ env.PACKAGE_VERSION }}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
@@ -56,3 +62,23 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Increment minor version and push changes
+        if: success()
+        run: |
+          # Extract current version
+          VERSION=$(jq -r .version package.json)
+          # Split version into major, minor, patch
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          # Increment minor version
+          NEW_MINOR=$((MINOR + 1))
+          NEW_VERSION="$MAJOR.$NEW_MINOR.0"
+          # Update package.json with new version
+          jq ".version = \"$NEW_VERSION\"" package.json > package.json.tmp && mv package.json.tmp package.json
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Commit and push changes
+          git add package.json
+          git commit -m "chore: release v$NEW_VERSION"
+          git push
